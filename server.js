@@ -89,6 +89,26 @@ const extractCoverUrlsFromHtml = (html, limit = 30) => {
   return out;
 };
 
+const extractCoverUrlsFromJinaText = (text, limit = 30) => {
+  if (typeof text !== "string" || !text) return [];
+  const out = [];
+  const seen = new Set();
+  const re = /https:\/\/[^"' )\]]+/g;
+  let m;
+  let i = 0;
+  while ((m = re.exec(text)) && out.length < limit) {
+    const u = m[0]
+      .replace(/\\u0026/g, "&")
+      .replace(/\\\//g, "/");
+    if (!u.includes("cdninstagram") && !u.includes("scontent") && !u.includes("instagram")) continue;
+    if (u.includes(".mp4") || u.includes(".webm")) continue;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    out.push({ post_id: `jina_${i++}`, image_url: u });
+  }
+  return out;
+};
+
 app.get("/healthz", (_, res) => {
   res.setHeader("Access-Control-Allow-Origin", ALLOW_ORIGIN);
   res.json({ success: true, ts: Date.now() });
@@ -256,9 +276,33 @@ app.get("/fetch-instagram-post-covers", async (req, res) => {
       }
     }
 
+    // Last fallback: jina mirror text directly
+    const jinaResp = await axios.get(JINA_MIRROR_URL(username), {
+      headers: {
+        "User-Agent": pickUA(),
+        Accept: "text/plain,*/*;q=0.8",
+      },
+      timeout: 15000,
+      validateStatus: () => true,
+    });
+    if (jinaResp.status >= 200 && jinaResp.status < 300) {
+      const covers = extractCoverUrlsFromJinaText(
+        typeof jinaResp.data === "string" ? jinaResp.data : "",
+        limit
+      );
+      if (covers.length) {
+        return res.json({
+          success: true,
+          username,
+          source: "jina_text_fallback",
+          covers,
+        });
+      }
+    }
+
     return res.status(502).json({
       success: false,
-      errMsg: `upstream status ${infoResp.status}`,
+      errMsg: `upstream status ${infoResp.status}; html status ${htmlResp.status}; jina status ${jinaResp.status}`,
     });
   } catch (err) {
     return res.status(502).json({
