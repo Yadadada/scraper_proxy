@@ -35,6 +35,29 @@ const buildNextDataHtmlFromWebProfileInfo = (data) => {
   )}</script></body></html>`;
 };
 
+const extractCoverUrlsFromWebProfileInfo = (data, limit = 30) => {
+  const out = [];
+  const user = data && data.data && data.data.user;
+  const media =
+    user &&
+    user.edge_owner_to_timeline_media &&
+    user.edge_owner_to_timeline_media.edges;
+  if (!Array.isArray(media)) return out;
+
+  for (let i = 0; i < media.length && out.length < limit; i += 1) {
+    const node = media[i] && media[i].node;
+    if (!node || node.is_video) continue;
+    // Per-post cover image only
+    const u = node.display_url || node.thumbnail_src || "";
+    if (!u) continue;
+    out.push({
+      post_id: node.shortcode || `post_${i}`,
+      image_url: u,
+    });
+  }
+  return out;
+};
+
 app.get("/healthz", (_, res) => {
   res.setHeader("Access-Control-Allow-Origin", ALLOW_ORIGIN);
   res.json({ success: true, ts: Date.now() });
@@ -132,6 +155,53 @@ app.get("/fetch-instagram-html", async (req, res) => {
     return res.status(502).json({
       success: false,
       errMsg: `upstream status ${lastStatus || infoResp.status}; mirror status ${jinaResp.status}`,
+    });
+  } catch (err) {
+    return res.status(502).json({
+      success: false,
+      errMsg: err && err.message ? err.message : "proxy request failed",
+    });
+  }
+});
+
+// Lightweight endpoint: return only first image of each post (cover), not all carousel images.
+app.get("/fetch-instagram-post-covers", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", ALLOW_ORIGIN);
+
+  const username = String(req.query.username || "")
+    .trim()
+    .replace(/^@/, "")
+    .toLowerCase();
+  const limit = Math.max(1, Math.min(50, Number(req.query.limit || 30)));
+
+  if (!username) {
+    return res.status(400).json({ success: false, errMsg: "invalid username" });
+  }
+
+  try {
+    const infoResp = await axios.get(IG_WEB_PROFILE_INFO_URL(username), {
+      headers: {
+        "User-Agent": pickUA(),
+        "X-IG-App-ID": "936619743392459",
+        Accept: "application/json",
+        Referer: `https://www.instagram.com/${username}/`,
+      },
+      timeout: 9000,
+      validateStatus: () => true,
+    });
+
+    if (infoResp.status < 200 || infoResp.status >= 300 || !infoResp.data) {
+      return res.status(502).json({
+        success: false,
+        errMsg: `upstream status ${infoResp.status}`,
+      });
+    }
+
+    const covers = extractCoverUrlsFromWebProfileInfo(infoResp.data, limit);
+    return res.json({
+      success: true,
+      username,
+      covers,
     });
   } catch (err) {
     return res.status(502).json({
