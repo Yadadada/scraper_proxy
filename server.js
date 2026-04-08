@@ -57,8 +57,8 @@ app.get("/fetch-instagram-html", async (req, res) => {
   try {
     let lastStatus = 0;
 
-    // 1) Try profile HTML with retries / UA rotation
-    for (let i = 0; i < 3; i++) {
+    // 1) Try profile HTML with limited retries / UA rotation
+    for (let i = 0; i < 2; i++) {
       const resp = await axios.get(url, {
         headers: {
           "User-Agent": pickUA(),
@@ -66,7 +66,7 @@ app.get("/fetch-instagram-html", async (req, res) => {
           "Accept-Language": "en-US,en;q=0.9",
           Referer: "https://www.instagram.com/",
         },
-        timeout: 20000,
+        timeout: 9000,
         maxRedirects: 5,
         validateStatus: () => true,
       });
@@ -81,7 +81,7 @@ app.get("/fetch-instagram-html", async (req, res) => {
         });
       }
       if (resp.status !== 429) break;
-      await sleep(500 * (i + 1));
+      await sleep(300 * (i + 1));
     }
 
     // 2) Fallback: web_profile_info (often survives when profile HTML is 429)
@@ -92,7 +92,7 @@ app.get("/fetch-instagram-html", async (req, res) => {
         Accept: "application/json",
         Referer: `https://www.instagram.com/${username}/`,
       },
-      timeout: 20000,
+      timeout: 9000,
       validateStatus: () => true,
     });
 
@@ -112,7 +112,7 @@ app.get("/fetch-instagram-html", async (req, res) => {
         "User-Agent": pickUA(),
         Accept: "text/plain,*/*;q=0.8",
       },
-      timeout: 20000,
+      timeout: 7000,
       validateStatus: () => true,
     });
 
