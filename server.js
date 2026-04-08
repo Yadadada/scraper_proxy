@@ -58,6 +58,37 @@ const extractCoverUrlsFromWebProfileInfo = (data, limit = 30) => {
   return out;
 };
 
+const extractCoverUrlsFromHtml = (html, limit = 30) => {
+  if (typeof html !== "string" || !html) return [];
+  const out = [];
+  const seen = new Set();
+
+  // Prefer post nodes with shortcode + display_url.
+  const re = /"shortcode":"([^"]+)".{0,1200}?"display_url":"(https:[^"]+)"/g;
+  let m;
+  while ((m = re.exec(html)) && out.length < limit) {
+    const postId = m[1];
+    const imageUrl = m[2].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+    if (!imageUrl || seen.has(imageUrl)) continue;
+    seen.add(imageUrl);
+    out.push({ post_id: postId, image_url: imageUrl });
+  }
+
+  // Fallback: collect display_url anyway
+  if (!out.length) {
+    const re2 = /"display_url":"(https:[^"]+)"/g;
+    let i = 0;
+    while ((m = re2.exec(html)) && out.length < limit) {
+      const imageUrl = m[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+      if (!imageUrl || seen.has(imageUrl)) continue;
+      seen.add(imageUrl);
+      out.push({ post_id: `post_${i++}`, image_url: imageUrl });
+    }
+  }
+
+  return out;
+};
+
 app.get("/healthz", (_, res) => {
   res.setHeader("Access-Control-Allow-Origin", ALLOW_ORIGIN);
   res.json({ success: true, ts: Date.now() });
@@ -190,18 +221,44 @@ app.get("/fetch-instagram-post-covers", async (req, res) => {
       validateStatus: () => true,
     });
 
-    if (infoResp.status < 200 || infoResp.status >= 300 || !infoResp.data) {
-      return res.status(502).json({
-        success: false,
-        errMsg: `upstream status ${infoResp.status}`,
-      });
+    if (infoResp.status >= 200 && infoResp.status < 300 && infoResp.data) {
+      const covers = extractCoverUrlsFromWebProfileInfo(infoResp.data, limit);
+      if (covers.length) {
+        return res.json({
+          success: true,
+          username,
+          source: "web_profile_info",
+          covers,
+        });
+      }
     }
 
-    const covers = extractCoverUrlsFromWebProfileInfo(infoResp.data, limit);
-    return res.json({
-      success: true,
-      username,
-      covers,
+    // Fallback: use HTML fetch path (which itself has mirror fallbacks),
+    // then extract one cover image per post.
+    const htmlResp = await axios.get(
+      `${req.protocol}://${req.get("host")}/fetch-instagram-html`,
+      {
+        params: { username },
+        timeout: 22000,
+        validateStatus: () => true,
+      }
+    );
+    if (htmlResp.status >= 200 && htmlResp.status < 300 && htmlResp.data && htmlResp.data.success) {
+      const html = htmlResp.data.html || "";
+      const covers = extractCoverUrlsFromHtml(html, limit);
+      if (covers.length) {
+        return res.json({
+          success: true,
+          username,
+          source: "html_fallback",
+          covers,
+        });
+      }
+    }
+
+    return res.status(502).json({
+      success: false,
+      errMsg: `upstream status ${infoResp.status}`,
     });
   } catch (err) {
     return res.status(502).json({
