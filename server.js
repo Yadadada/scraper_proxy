@@ -9,6 +9,8 @@ const IG_PROFILE_URL = (username) =>
   `https://www.instagram.com/${encodeURIComponent(username)}/`;
 const IG_WEB_PROFILE_INFO_URL = (username) =>
   `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
+const DDIG_PROFILE_URL = (username) =>
+  `https://www.ddinstagram.com/${encodeURIComponent(username)}/`;
 
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
@@ -104,9 +106,28 @@ app.get("/fetch-instagram-html", async (req, res) => {
       });
     }
 
+    // 3) Last fallback: ddinstagram mirror.
+    const ddResp = await axios.get(DDIG_PROFILE_URL(username), {
+      headers: {
+        "User-Agent": pickUA(),
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      timeout: 20000,
+      validateStatus: () => true,
+    });
+
+    if (ddResp.status >= 200 && ddResp.status < 300) {
+      return res.json({
+        success: true,
+        username,
+        source: "ddinstagram_mirror",
+        html: typeof ddResp.data === "string" ? ddResp.data : "",
+      });
+    }
+
     return res.status(502).json({
       success: false,
-      errMsg: `upstream status ${lastStatus || infoResp.status}`,
+      errMsg: `upstream status ${lastStatus || infoResp.status}; mirror status ${ddResp.status}`,
     });
   } catch (err) {
     return res.status(502).json({
